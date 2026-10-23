@@ -22,6 +22,63 @@ import {
 } from './fixtures';
 
 describe('normalizeTransaction', () => {
+  it('uses ING merchant address as payee while preserving card notes and identity', () => {
+    const tx = {
+      ...mockDebitTransaction,
+      creditor: {
+        name: null,
+        postal_address: { address_line: ['ALDI Sp. z o.o. 068       Lodz'] },
+      },
+      debtor: { name: 'Account owner' },
+      debtor_agent: { bic_fi: 'INGBPLPW' },
+      remittance_information: ['Płatność kartą 21.10.2026 Nr karty 4246xx3411'],
+    };
+    const result = normalizeTransaction(tx);
+    expect(result.payeeName).toBe('ALDI Sp. z o.o. 068 Lodz');
+    expect(result.notes).toBe(tx.remittance_information[0]);
+    expect(result.transactionId).toBe(mockDebitTransaction.entry_reference);
+    expect(result.transactionAmount.amount).toBe('-25.99');
+    expect(
+      normalizeTransaction({
+        ...tx,
+        creditor: { ...tx.creditor, name: 'Named merchant' },
+      }).payeeName,
+    ).toBe('Named merchant');
+    expect(
+      normalizeTransaction({
+        ...tx,
+        debtor_agent: { bic_fi: 'OTHERBANK' },
+        debtor: {},
+      }).payeeName,
+    ).toBe(tx.remittance_information[0]);
+  });
+
+  it('uses the ING debtor address for credits and ignores owner addresses or unknown direction', () => {
+    const tx = {
+      ...mockCreditTransaction,
+      creditor_agent: { bic_fi: 'INGBPLPWXXX' },
+      creditor: { postal_address: { address_line: ['Account owner'] } },
+      debtor: {
+        name: null,
+        postal_address: { address_line: ['Sender name', 'Sender address'] },
+      },
+    };
+    expect(normalizeTransaction(tx).payeeName).toBe('Sender name');
+    expect(normalizeTransaction({ ...tx, debtor: {} }).payeeName).toBe(
+      'Monthly salary',
+    );
+    expect(
+      normalizeTransaction({ ...tx, credit_debit_indicator: undefined })
+        .payeeName,
+    ).toBe('Monthly salary');
+    expect(
+      normalizeTransaction({
+        ...tx,
+        debtor: { postal_address: { address_line: ['  ', 'Street only'] } },
+      }).payeeName,
+    ).toBe('Monthly salary');
+  });
+
   it('should use debtor name for CRDT transactions', () => {
     const result = normalizeTransaction(mockCreditTransaction);
     expect(result.payeeName).toBe('My Employer');

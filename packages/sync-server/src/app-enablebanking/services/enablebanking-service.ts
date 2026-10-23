@@ -13,12 +13,19 @@ const BASE_URL = 'https://api.enablebanking.com';
 
 // --- Type definitions ---
 
+type EnableBankingParty = {
+  name?: string | null;
+  postal_address?: { address_line?: string[] | null } | null;
+};
+
 export type EnableBankingTransaction = {
   entry_reference?: string;
   transaction_id?: string;
   transaction_amount: { currency: string; amount: string };
-  creditor?: { name?: string };
-  debtor?: { name?: string };
+  creditor?: EnableBankingParty;
+  debtor?: EnableBankingParty;
+  creditor_agent?: { bic_fi?: string | null } | null;
+  debtor_agent?: { bic_fi?: string | null } | null;
   credit_debit_indicator?: 'CRDT' | 'DBIT';
   status?: 'BOOK' | 'PDNG';
   booking_date?: string;
@@ -211,11 +218,26 @@ export function normalizeTransaction(
     tx.booking_date || tx.value_date || tx.transaction_date || '';
   const valueDate = tx.value_date;
 
+  // ING supplies counterparty names in the first address line instead of name.
+  // Only read the counterparty's address, never the account owner's address.
+  const isIng = [tx.creditor_agent, tx.debtor_agent].some(agent =>
+    /^INGBPLPW(?:XXX)?$/i.test(agent?.bic_fi || ''),
+  );
+  const counterparty =
+    tx.credit_debit_indicator === 'DBIT'
+      ? tx.creditor
+      : tx.credit_debit_indicator === 'CRDT'
+        ? tx.debtor
+        : undefined;
+  const ingCounterpartyName = isIng
+    ? counterparty?.postal_address?.address_line?.[0]
+        ?.trim()
+        .replace(/\s+/g, ' ')
+    : undefined;
+
   let payeeName = '';
-  if (tx.credit_debit_indicator === 'CRDT' && tx.debtor?.name) {
-    payeeName = tx.debtor.name;
-  } else if (tx.credit_debit_indicator === 'DBIT' && tx.creditor?.name) {
-    payeeName = tx.creditor.name;
+  if (counterparty?.name || ingCounterpartyName) {
+    payeeName = counterparty?.name || ingCounterpartyName || '';
   } else if (tx.creditor?.name) {
     payeeName = tx.creditor.name;
   } else if (tx.debtor?.name) {
